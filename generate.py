@@ -77,6 +77,10 @@ def short_name(name):
     return re.sub(r"-[0-9a-f]{7,40}$", "", name)
 
 
+def slugify(branch):
+    return re.sub(r"[^a-z0-9]+", "-", branch.lower()).strip("-") or "branch"
+
+
 def main():
     # group surviving artifacts into builds keyed by workflow run
     builds = {}
@@ -103,10 +107,16 @@ def main():
 
     order = sorted(branches, key=lambda x: (x != "main", x.lower()))
     art_count = sum(len(b["arts"]) for b in builds.values())
+    slugs = {br: slugify(br) for br in order}
+
+    chips = ['<a href="#" data-all>all</a>']
+    chips += [f'<a href="#{slugs[br]}">{html.escape(br)}</a>' for br in order]
+    filterbar = '<div class="filter"><span>branch</span>' + "".join(chips) + "</div>"
 
     sections = []
     for branch in order:
-        sections.append(f"<h2>{html.escape(branch)}</h2>")
+        slug = slugs[branch]
+        blocks = []
         for rid, b in sorted(branches[branch],
                              key=lambda x: x[1]["created_at"], reverse=True):
             sha = b["sha"][:7]
@@ -120,12 +130,16 @@ def main():
                 rows.append(f'<tr><td>{label}</td>'
                             f'<td class="sz">{human_size(a["size_in_bytes"])}</td>'
                             f'<td><a class="dl" href="{link}">download</a></td></tr>')
-            sections.append(
+            blocks.append(
                 '<div class="build">'
                 f'<div class="title">{html.escape(b["title"] or sha)}</div>'
                 f'<div class="sub"><a href="{commit}"><code>{sha}</code></a>'
                 f' · {age(b["created_at"])}{fork}</div>'
                 f'<table class="arts">{"".join(rows)}</table></div>')
+        sections.append(
+            f'<section class="branch" id="b-{slug}">'
+            f'<h2><a class="anchor" href="#{slug}">{html.escape(branch)}</a></h2>'
+            + "".join(blocks) + "</section>")
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     doc = (TEMPLATE
@@ -133,6 +147,7 @@ def main():
            .replace("{builds}", str(len(builds)))
            .replace("{count}", str(art_count))
            .replace("{now}", now)
+           .replace("{filter}", filterbar)
            .replace("{body}", "\n".join(sections)))
 
     os.makedirs(os.path.dirname(OUTPUT) or ".", exist_ok=True)
@@ -167,6 +182,12 @@ TEMPLATE = """<!doctype html>
   a:hover { text-decoration: underline; }
   .dl { font-weight: 600; }
   .fork { color: #9a6700; font-weight: 600; }
+  .filter { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; margin: 0 0 1.6rem; font-size: 13px; }
+  .filter > span { color: #666; margin-right: .2rem; }
+  .filter a { border: 1px solid #d7e2ee; border-radius: 999px; padding: .12rem .6rem; background: #f3f6fa; color: #0969da; }
+  .filter a:hover { background: #e8eff7; text-decoration: none; }
+  .filter a.active { background: #0969da; border-color: #0969da; color: #fff; }
+  h2 .anchor { color: inherit; }
   dialog { max-width: 640px; border: 1px solid #ddd; border-radius: 10px; padding: 1.4rem 1.6rem; color: #1c1e21; }
   dialog::backdrop { background: rgba(0,0,0,.45); }
   dialog h2 { margin: 0 0 .4rem; border: 0; padding: 0; }
@@ -182,6 +203,7 @@ No warranty. Builds tagged <em>fork PR</em> are compiled from unreviewed contrib
 Links are served by <a href="https://nightly.link">nightly.link</a>; artifacts expire and disappear automatically.</p>
 <p class="help"><a href="#" id="help-open">❓ What are these files? · Which one do I need? · How to use?</a></p>
 <p class="meta">{builds} builds · {count} artifacts · generated {now}</p>
+{filter}
 {body}
 
 <dialog id="help">
@@ -221,6 +243,21 @@ Links are served by <a href="https://nightly.link">nightly.link</a>; artifacts e
   const dlg = document.getElementById("help");
   document.getElementById("help-open").addEventListener("click", function (e) { e.preventDefault(); dlg.showModal(); });
   dlg.addEventListener("click", function (e) { if (e.target === dlg) dlg.close(); });
+
+  const sections = document.querySelectorAll("section.branch");
+  const chips = document.querySelectorAll(".filter a");
+  function applyFilter() {
+    const slug = decodeURIComponent(location.hash.replace(/^#/, ""));
+    const filtering = slug && [...sections].some(s => s.id === "b-" + slug);
+    sections.forEach(s => { s.hidden = filtering && s.id !== "b-" + slug; });
+    if (filtering) window.scrollTo(0, 0);
+    chips.forEach(c => {
+      const isAll = c.dataset.all !== undefined;
+      c.classList.toggle("active", isAll ? !filtering : c.getAttribute("href") === "#" + slug);
+    });
+  }
+  window.addEventListener("hashchange", applyFilter);
+  applyFilter();
 </script>
 </body>
 </html>
