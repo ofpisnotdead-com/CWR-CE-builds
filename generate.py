@@ -109,9 +109,20 @@ def main():
     art_count = sum(len(b["arts"]) for b in builds.values())
     slugs = {br: slugify(br) for br in order}
 
+    def last_build(branch):
+        return max(b["created_at"] for _, b in branches[branch])
+
+    recent = sorted(order, key=last_build, reverse=True)
+    top = {"main", *[br for br in recent if br != "main"][:10]}
+
+    extra = ' class="extra"'
     chips = ['<a href="#" data-all>all</a>']
-    chips += [f'<a href="#{slugs[br]}">{html.escape(br)}</a>' for br in order]
-    filterbar = '<div class="filter"><span>branch</span>' + "".join(chips) + "</div>"
+    chips += [f'<a href="#{slugs[br]}"{"" if br in top else extra}>'
+              f'{html.escape(br)}</a>' for br in order]
+    filterbar = ('<div class="filter">'
+                 '<input id="q" type="search" placeholder="search branches">'
+                 '<span>branch</span>' + "".join(chips) +
+                 f'<a href="#" id="more">show all ({len(order)})</a></div>')
 
     sections = []
     for branch in order:
@@ -187,6 +198,8 @@ TEMPLATE = """<!doctype html>
   .filter a { border: 1px solid #d7e2ee; border-radius: 999px; padding: .12rem .6rem; background: #f3f6fa; color: #0969da; }
   .filter a:hover { background: #e8eff7; text-decoration: none; }
   .filter a.active { background: #0969da; border-color: #0969da; color: #fff; }
+  .filter input { font: inherit; font-size: 13px; padding: .2rem .5rem; border: 1px solid #d0d7de; border-radius: 6px; }
+  .filter #more { border: 0; background: none; font-weight: 600; }
   h2 .anchor { color: inherit; }
   dialog { max-width: 640px; border: 1px solid #ddd; border-radius: 10px; padding: 1.4rem 1.6rem; color: #1c1e21; }
   dialog::backdrop { background: rgba(0,0,0,.45); }
@@ -245,7 +258,7 @@ Links are served by <a href="https://nightly.link">nightly.link</a>; artifacts e
   dlg.addEventListener("click", function (e) { if (e.target === dlg) dlg.close(); });
 
   const sections = document.querySelectorAll("section.branch");
-  const chips = document.querySelectorAll(".filter a");
+  const chips = document.querySelectorAll(".filter a:not(#more)");
   function applyFilter() {
     const slug = decodeURIComponent(location.hash.replace(/^#/, ""));
     const filtering = slug && [...sections].some(s => s.id === "b-" + slug);
@@ -258,6 +271,26 @@ Links are served by <a href="https://nightly.link">nightly.link</a>; artifacts e
   }
   window.addEventListener("hashchange", applyFilter);
   applyFilter();
+
+  const q = document.getElementById("q");
+  const more = document.getElementById("more");
+  const moreLabel = more.textContent;
+  let showAll = false;
+  function applyChips() {
+    const term = q.value.trim().toLowerCase();
+    chips.forEach(c => {
+      if (c.dataset.all !== undefined) return;
+      c.hidden = term
+        ? !c.textContent.toLowerCase().includes(term)
+        : c.classList.contains("extra") && !showAll && !c.classList.contains("active");
+    });
+    more.hidden = !!term;
+    more.textContent = showAll ? "show fewer" : moreLabel;
+  }
+  more.addEventListener("click", function (e) { e.preventDefault(); showAll = !showAll; applyChips(); });
+  q.addEventListener("input", applyChips);
+  window.addEventListener("hashchange", applyChips);
+  applyChips();
 </script>
 </body>
 </html>
