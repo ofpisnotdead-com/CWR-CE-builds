@@ -162,7 +162,7 @@ def main():
            .replace("{body}", "\n".join(sections)))
 
     os.makedirs(os.path.dirname(OUTPUT) or ".", exist_ok=True)
-    with open(OUTPUT, "w") as f:
+    with open(OUTPUT, "w", encoding="utf-8") as f:
         f.write(doc)
     print(f"wrote {OUTPUT}: {len(builds)} builds, {art_count} artifacts, "
           f"{len(branches)} branches")
