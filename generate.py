@@ -81,6 +81,101 @@ def slugify(branch):
     return re.sub(r"[^a-z0-9]+", "-", branch.lower()).strip("-") or "branch"
 
 
+# Artifacts are named <OS>-<arch>-<config>-<Component>-<sha>; the page pivots that
+# into one row per component and one column per arch/OS pair.
+OS_NAMES = {"windows": "Windows", "win": "Windows", "linux": "Linux",
+            "macos": "macOS", "osx": "macOS", "mac": "macOS"}
+ARCH_NAMES = {"x64": "x64", "x86_64": "x64", "amd64": "x64",
+              "arm64": "arm64", "aarch64": "arm64", "x86": "x86", "arm": "arm"}
+OS_ORDER = ["Windows", "Linux", "macOS"]
+ARCH_ORDER = ["x64", "arm64"]
+COMPONENT_ORDER = ["Game", "GameDemo", "Server", "MasterService", "Trident", "Symbols"]
+
+
+def rank(order, value):
+    """Known values keep the listed order, anything new sorts alphabetically after."""
+    return (order.index(value) if value in order else len(order), value)
+
+
+def parse_name(name):
+    """Split a name into (os, arch, config, component), or None when it doesn't
+    fit the scheme; those artifacts are listed as-is rather than dropped."""
+    parts = short_name(name).split("-")
+    if len(parts) < 3:
+        return None
+    system = OS_NAMES.get(parts[0].lower())
+    arch = ARCH_NAMES.get(parts[1].lower())
+    if not system or not arch:
+        return None
+    config = parts[2] if len(parts) > 3 else ""
+    component = "-".join(parts[3:]) if len(parts) > 3 else parts[2]
+    return system, arch, config, component
+
+
+def dl_url(rid, name):
+    return f"https://nightly.link/{REPO}/actions/runs/{rid}/{name}.zip"
+
+
+def matrix(rid, build, cols):
+    """The component x platform table for a single build."""
+    groups = []  # [(arch, [os, ...]), ...]; arch spans the first header row
+    for arch, system in cols:
+        if groups and groups[-1][0] == arch:
+            groups[-1][1].append(system)
+        else:
+            groups.append((arch, [system]))
+    starts, at = set(), 0  # column indexes starting an arch group, for the divider
+    for _, systems in groups:
+        starts.add(at)
+        at += len(systems)
+
+    head = ('<tr><th class="rowh" rowspan="2"></th>'
+            + "".join(f'<th class="grp gs" colspan="{len(s)}">{a}</th>'
+                      for a, s in groups)
+            + "</tr><tr>"
+            + "".join(f'<th class="{"gs" if i in starts else ""}">{s}</th>'
+                      for i, (_, s) in enumerate(cols))
+            + "</tr>")
+
+    show_config = len({cfg for _, cfg in build["grid"]}) > 1
+    rows = []
+    for key in sorted(build["grid"], key=lambda k: (rank(COMPONENT_ORDER, k[0]), k[1])):
+        component, config = key
+        cells = []
+        for i, col in enumerate(cols):
+            gs = " gs" if i in starts else ""
+            system, arch = col[1], col[0]
+            a = build["grid"][key].get(col)
+            if a:
+                size = human_size(a["size_in_bytes"])
+                tip = (f"{component} · {system} {arch}"
+                       f"{' · ' + config if config else ''} · {size}"
+                       " · downloads a .zip")
+                cells.append(f'<td class="hit{gs}" data-tip="{html.escape(tip)}">'
+                             f'<a class="dl" href="{dl_url(rid, a["name"])}">{size}</a>'
+                             '</td>')
+            else:
+                tip = (f"No {system} {arch} build of {component} here — that "
+                       "platform may not be set up yet, or its job did not finish. "
+                       "An older build of this branch may have it.")
+                cells.append(f'<td class="na{gs}" data-tip="{html.escape(tip)}">–</td>')
+        label = html.escape(component) + (
+            f'<span class="cfg">{html.escape(config)}</span>'
+            if show_config and config else "")
+        rows.append(f'<tr><th class="rowh">{label}</th>{"".join(cells)}</tr>')
+
+    other = ""
+    if build["other"]:
+        links = " · ".join(
+            f'<a href="{dl_url(rid, a["name"])}">{html.escape(short_name(a["name"]))}</a>'
+            f' <span class="sz">{human_size(a["size_in_bytes"])}</span>'
+            for a in sorted(build["other"], key=lambda a: a["name"]))
+        other = f'<div class="other">also in this build: {links}</div>'
+
+    return (f'<div class="tw"><table class="arts"><thead>{head}</thead>'
+            f'<tbody>{"".join(rows)}</tbody></table></div>{other}')
+
+
 def main():
     # group surviving artifacts into builds keyed by workflow run
     builds = {}
@@ -100,6 +195,21 @@ def main():
             "arts": [],
         })
         b["arts"].append(a)
+
+    # index every build as grid[(component, config)][(arch, os)] = artifact
+    for b in builds.values():
+        b["grid"], b["other"] = {}, []
+        for a in b["arts"]:
+            parsed = parse_name(a["name"])
+            if not parsed:
+                b["other"].append(a)
+                continue
+            system, arch, config, component = parsed
+            b["grid"].setdefault((component, config), {})[(arch, system)] = a
+
+    # all tables share one column set, so builds can be compared at a glance
+    cols = sorted({c for b in builds.values() for row in b["grid"].values() for c in row},
+                  key=lambda c: (rank(ARCH_ORDER, c[0]), rank(OS_ORDER, c[1])))
 
     branches = {}
     for rid, b in builds.items():
@@ -134,19 +244,12 @@ def main():
             commit = f'https://github.com/{REPO}/commit/{b["sha"]}'
             fork = (' · <span class="fork">fork PR · unreviewed</span>'
                     if b["fork"] else "")
-            rows = []
-            for a in sorted(b["arts"], key=lambda a: a["name"]):
-                link = f'https://nightly.link/{REPO}/actions/runs/{rid}/{a["name"]}.zip'
-                label = html.escape(short_name(a["name"]))
-                rows.append(f'<tr><td>{label}</td>'
-                            f'<td class="sz">{human_size(a["size_in_bytes"])}</td>'
-                            f'<td><a class="dl" href="{link}">download</a></td></tr>')
             blocks.append(
                 '<div class="build">'
                 f'<div class="title">{html.escape(b["title"] or sha)}</div>'
                 f'<div class="sub"><a href="{commit}"><code>{sha}</code></a>'
                 f' · {age(b["created_at"])}{fork}</div>'
-                f'<table class="arts">{"".join(rows)}</table></div>')
+                + matrix(rid, b, cols) + '</div>')
         sections.append(
             f'<section class="branch" id="b-{slug}">'
             f'<h2><a class="anchor" href="#{slug}">{html.escape(branch)}</a></h2>'
@@ -185,9 +288,22 @@ TEMPLATE = """<!doctype html>
   .build { margin: 0 0 1.4rem; }
   .build .title { font-weight: 600; }
   .build .sub { color: #666; font-size: 13px; margin-top: .1rem; }
-  .arts { border-collapse: collapse; margin-top: .5rem; font-size: 13px; }
-  .arts td { padding: .2rem 1.2rem .2rem 0; border-bottom: 1px solid #f3f3f3; white-space: nowrap; }
-  .arts td.sz { color: #888; text-align: right; padding-right: 1.6rem; }
+  .tw { overflow-x: auto; margin-top: .5rem; }
+  .arts { border-collapse: collapse; font-size: 13px; table-layout: fixed; width: 100%; max-width: 620px; }
+  .arts th, .arts td { padding: .22rem .5rem; text-align: center; white-space: nowrap; }
+  .arts thead th { font-weight: 600; font-size: 11px; color: #57606a; text-transform: uppercase; letter-spacing: .04em; }
+  .arts thead .grp { border-bottom: 1px solid #e9e9e9; color: #8b949e; text-transform: none; letter-spacing: 0; font-size: 12px; }
+  .arts th.rowh { width: 9.5rem; text-align: left; font-weight: 600; padding: .22rem 1rem .22rem 0; text-transform: none; letter-spacing: 0; font-size: 13px; color: inherit; overflow: hidden; text-overflow: ellipsis; }
+  .arts tbody tr { border-top: 1px solid #f3f3f3; }
+  .arts tbody tr:hover { background: #fafbfc; }
+  .arts .gs { border-left: 1px solid #ececec; }
+  .arts td.na { color: #ccc; cursor: help; }
+  .arts td.hit { padding: 0; }
+  .arts td.hit a { display: block; padding: .22rem .5rem; }
+  .arts .cfg { font-weight: 400; color: #999; font-size: 11px; margin-left: .35rem; }
+  .other { font-size: 12px; color: #666; margin-top: .45rem; }
+  .other .sz { color: #999; }
+  #tip { position: absolute; display: none; z-index: 50; max-width: 260px; background: #24292f; color: #fff; padding: .4rem .55rem; border-radius: 6px; font-size: 12px; line-height: 1.4; box-shadow: 0 2px 10px rgba(0,0,0,.25); pointer-events: none; }
   code { background: #f3f3f3; padding: 1px 4px; border-radius: 3px; }
   a { color: #0969da; text-decoration: none; }
   a:hover { text-decoration: underline; }
@@ -229,11 +345,14 @@ Links are served by <a href="https://nightly.link">nightly.link</a>; artifacts e
     <li><strong>GameDemo</strong> — the cut-down demo executable.</li>
     <li><strong>Server</strong> — the dedicated server, only needed to host.</li>
     <li><strong>Symbols</strong> — debug symbols for crash diagnosis, not needed to play.</li>
+    <li>Anything else (<strong>MasterService</strong>, <strong>Trident</strong>, …) is backend or tooling — not needed to play.</li>
   </ul>
-  <p><code>Linux-x64-*</code> are for Linux, <code>Windows-x64-*</code> for Windows. Every download is a <code>.zip</code>.</p>
+
+  <h3>How do I read the table?</h3>
+  <p>One row per program, one column per platform, grouped by CPU architecture (<code>x64</code>, <code>arm64</code>) and then by system (Windows, Linux, macOS). A cell shows the download size — click it to get the <code>.zip</code>. A grey <code>–</code> means that combination is not in this build: it may not be set up yet, or its CI job did not finish; hover it for details, and check an older build. Hovering a size shows the exact platform it belongs to.</p>
 
   <h3>Which one do I need?</h3>
-  <p>Pick by your platform, then:</p>
+  <p>Pick your row, then your platform column:</p>
   <ul>
     <li>Full features (editor, mods, multiplayer) → <strong>Game</strong></li>
     <li>Plain demo → <strong>GameDemo</strong></li>
@@ -291,6 +410,29 @@ Links are served by <a href="https://nightly.link">nightly.link</a>; artifacts e
   q.addEventListener("input", applyChips);
   window.addEventListener("hashchange", applyChips);
   applyChips();
+
+  // one shared tooltip, positioned in page coords so the scrollable tables
+  // cannot clip it
+  const tip = document.createElement("div");
+  tip.id = "tip";
+  document.body.appendChild(tip);
+  function hideTip() { tip.style.display = "none"; }
+  document.addEventListener("mouseover", function (e) {
+    const el = e.target.closest("[data-tip]");
+    if (!el) return;
+    tip.textContent = el.dataset.tip;
+    tip.style.display = "block";
+    const r = el.getBoundingClientRect();
+    const w = tip.offsetWidth;
+    const max = document.documentElement.clientWidth - w - 8;
+    tip.style.left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, max)) + window.scrollX + "px";
+    tip.style.top = r.bottom + window.scrollY + 6 + "px";
+  });
+  document.addEventListener("mouseout", function (e) {
+    const el = e.target.closest("[data-tip]");
+    if (el && !el.contains(e.relatedTarget)) hideTip();
+  });
+  document.addEventListener("scroll", hideTip, true);
 </script>
 </body>
 </html>
