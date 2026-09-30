@@ -89,7 +89,7 @@ ARCH_NAMES = {"x64": "x64", "x86_64": "x64", "amd64": "x64",
               "arm64": "arm64", "aarch64": "arm64", "x86": "x86", "arm": "arm"}
 OS_ORDER = ["Windows", "Linux", "macOS"]
 ARCH_ORDER = ["x64", "arm64"]
-COMPONENT_ORDER = ["Game", "GameDemo", "Server", "MasterService", "Trident", "Symbols"]
+COMPONENT_ORDER = ["Game", "GameDemo", "Server", "Tools", "Studio", "MasterService", "Trident", "Symbols"]
 
 
 def rank(order, value):
@@ -282,6 +282,7 @@ TEMPLATE = """<!doctype html>
   h1 { margin-bottom: .2rem; }
   .note { background: #fff8e1; border: 1px solid #f0d98a; padding: .6rem .8rem; border-radius: 6px; font-size: 14px; }
   .help { margin: .6rem 0 0; }
+  .license { color: #666; font-size: 13px; margin: .6rem 0 0; }
   .help a { font-weight: 600; }
   .meta { color: #666; font-size: 13px; margin: .3rem 0 1.5rem; }
   h2 { margin: 2rem 0 .6rem; border-bottom: 1px solid #eee; padding-bottom: .3rem; }
@@ -331,6 +332,7 @@ TEMPLATE = """<!doctype html>
 No warranty. Builds tagged <em>fork PR</em> are compiled from unreviewed contributor code — run at your own risk.
 Links are served by <a href="https://nightly.link">nightly.link</a>; artifacts expire and disappear automatically.</p>
 <p class="help"><a href="#" id="help-open">❓ What are these files? · Which one do I need? · How to use?</a></p>
+<p class="license">Windows and macOS downloads include OpenAL Soft (<code>OpenAL32.dll</code> / <code>libopenal.dylib</code>), licensed under the GNU LGPL 2.1 or later; the license text ships in <code>OpenAL-Soft.LICENSE.txt</code>. Its source is the upstream OpenAL Soft release pinned in <code>cmake/vcpkg-overlay-ports/openal-soft/vcpkg.json</code> plus the patches in that directory, taken from the CWR-CE commit a build was made from. Linux builds use the system OpenAL library.</p>
 <p class="meta">{builds} builds · {count} artifacts · generated {now}</p>
 {filter}
 {body}
@@ -344,6 +346,8 @@ Links are served by <a href="https://nightly.link">nightly.link</a>; artifacts e
     <li><strong>Game</strong> — the full executable: mission editor, mods and multiplayer included (these are off in the demo build).</li>
     <li><strong>GameDemo</strong> — the cut-down demo executable.</li>
     <li><strong>Server</strong> — the dedicated server, only needed to host.</li>
+    <li><strong>Tools</strong> - <code>PoseidonTools</code>, a command-line tool to inspect, convert and pack game data (PBO, models, textures, terrains, configs).</li>
+    <li><strong>Studio</strong> - <code>PoseidonStudio</code>, a graphical asset viewer and editor.</li>
     <li><strong>Symbols</strong> — debug symbols for crash diagnosis, not needed to play.</li>
     <li>Anything else (<strong>MasterService</strong>, <strong>Trident</strong>, …) is backend or tooling — not needed to play.</li>
   </ul>
@@ -357,7 +361,7 @@ Links are served by <a href="https://nightly.link">nightly.link</a>; artifacts e
     <li>Full features (editor, mods, multiplayer) → <strong>Game</strong></li>
     <li>Plain demo → <strong>GameDemo</strong></li>
   </ul>
-  <p>Use a build under <strong>main</strong> for the latest stable WIP, or a branch / PR build to test that specific change. You don't need <em>Server</em> or <em>Symbols</em> to play.</p>
+  <p>Use a build under <strong>main</strong> for the latest stable WIP, or a branch / PR build to test that specific change. You don't need <em>Server</em>, <em>Tools</em>, <em>Studio</em> or <em>Symbols</em> to play.</p>
 
   <h3>How do I use it? (the Steam demo folder is the sandbox)</h3>
   <ol>
